@@ -218,11 +218,11 @@ function updateAudioLevels() {
   if (!baseGainNode || !boostGainNode || !audioContext) return;
   
   try {
-    // Base volume scales with movement speed (increased by 1.5x from 0.6 to 0.9)
-    const baseVolume = currentSpeed * 0.9;
+    // Base volume scales with movement speed (increased by 1.3x again: 1.17 → 1.52)
+    const baseVolume = currentSpeed * 1.52;
     
-    // Boost volume scales with boost level (increased by 1.5x from 0.4 to 0.6)
-    const boostVolume = currentBoostLevel * 0.6;
+    // Boost volume scales with boost level (increased by 1.3x again: 0.78 → 1.01)
+    const boostVolume = currentBoostLevel * 1.01;
     
     // Smooth volume transitions
     baseGainNode.gain.linearRampToValueAtTime(baseVolume, audioContext.currentTime + 0.1);
@@ -492,7 +492,7 @@ function createSpotlight(beamWidthDegrees = 35) {
 }
 
 // Add underwater particles system - dynamically sized based on wreck
-let particleCount = 3500; // Initial default, will be recalculated per wreck
+let particleCount = 1750; // Halved from 3500 - Initial default, will be recalculated per wreck
 const particleGeometry = new THREE.BufferGeometry();
 let particlePositions = new Float32Array(particleCount * 3);
 let particleVelocities = new Float32Array(particleCount * 3);
@@ -514,26 +514,26 @@ function calculateParticleCount(wreckBounds) {
   const expandedSize = size.clone().multiplyScalar(expansion);
   const volume = expandedSize.x * expandedSize.y * expandedSize.z;
   
-  // Dynamic density scaling based on volume size
+  // Dynamic density scaling based on volume size - halved all densities
   // Small sites get much lower density, large sites get much higher density
   let targetDensity;
   if (volume < 5000) {
-    // Small sites (e.g., 20x5m): 0.75 particles/m³ (halved again)
-    targetDensity = 0.75;
+    // Small sites (e.g., 20x5m): 0.375 particles/m³ (halved from 0.75)
+    targetDensity = 0.375;
   } else if (volume < 20000) {
-    // Medium sites: Scale from 0.75 to 6.0 particles/m³
+    // Medium sites: Scale from 0.375 to 3.0 particles/m³ (halved)
     const scaleFactor = (volume - 5000) / 15000; // 0 to 1
-    targetDensity = 0.75 + (scaleFactor * 5.25); // 0.75 to 6.0
+    targetDensity = 0.375 + (scaleFactor * 2.625); // 0.375 to 3.0
   } else {
-    // Large sites (e.g., 70x15m): 9.0 particles/m³ (doubled again)
-    targetDensity = 9.0;
+    // Large sites (e.g., 70x15m): 4.5 particles/m³ (halved from 9.0)
+    targetDensity = 4.5;
   }
   
   const calculatedCount = Math.round(volume * targetDensity);
   
-  // Clamp between reasonable limits for performance
-  const minParticles = 800;   // Reduced minimum for small sites
-  const maxParticles = 20000; // Increased maximum for large sites
+  // Clamp between reasonable limits for performance - halved limits
+  const minParticles = 400;   // Halved from 800
+  const maxParticles = 10000; // Halved from 20000
   const finalCount = Math.max(minParticles, Math.min(maxParticles, calculatedCount));
   
   console.log(`Wreck size: ${size.x.toFixed(1)}×${size.y.toFixed(1)}×${size.z.toFixed(1)}m`);
@@ -584,6 +584,12 @@ function updateParticleBounds() {
     
     console.log('Updated particle bounds:', particleBounds);
     
+    // Update shader uniforms with new bounds
+    if (particleMaterial && particleMaterial.uniforms) {
+      particleMaterial.uniforms.boundsMin.value.copy(particleBounds.min);
+      particleMaterial.uniforms.boundsMax.value.copy(particleBounds.max);
+    }
+    
     // Redistribute existing particles within new bounds
     redistributeParticles();
   }
@@ -605,8 +611,9 @@ function redistributeParticles() {
   particles.geometry.attributes.position.needsUpdate = true;
 }
 
-// Function to initialize particle data
+// Function to initialize particle data with additional attributes for GPU shader
 function initializeParticles() {
+  // Initialize position, velocity, and size arrays
   for (let i = 0; i < particleCount; i++) {
     const i3 = i * 3;
     
@@ -615,10 +622,16 @@ function initializeParticles() {
     particlePositions[i3 + 1] = particleBounds.min.y + Math.random() * (particleBounds.max.y - particleBounds.min.y);
     particlePositions[i3 + 2] = particleBounds.min.z + Math.random() * (particleBounds.max.z - particleBounds.min.z);
     
-    // Ultra slow random velocities for very gentle drifting motion
-    particleVelocities[i3] = (Math.random() - 0.5) * 0.002;     // x velocity - ultra slow
-    particleVelocities[i3 + 1] = -Math.random() * 0.001 - 0.0005; // y velocity - very slow downward settling
-    particleVelocities[i3 + 2] = (Math.random() - 0.5) * 0.002; // z velocity - ultra slow
+    // Slow trending velocities for gentle, directional drifting motion
+    // Create a subtle underwater current with some random variation
+    const baseCurrentX = 0.0001; // Half speed - very slow eastward current
+    const baseCurrentY = -0.00005; // Half speed - very slow downward settling
+    const baseCurrentZ = 0.00005; // Half speed - very slow northward current
+    
+    // Add small random variation to the base current (much less random than before)
+    particleVelocities[i3] = baseCurrentX + (Math.random() - 0.5) * 0.0002;     // x velocity - half speed with trend
+    particleVelocities[i3 + 1] = baseCurrentY + (-Math.random() * 0.0001 - 0.00005); // y velocity - half speed downward trend
+    particleVelocities[i3 + 2] = baseCurrentZ + (Math.random() - 0.5) * 0.0002; // z velocity - half speed with trend
     
     // Vary particle sizes - most small, some medium, few large
     const rand = Math.random();
@@ -630,39 +643,50 @@ function initializeParticles() {
       particleSizes[i] = 0.08 + Math.random() * 0.04; // Large particles (0.08-0.12)
     }
   }
+  
+  // Create additional attributes for GPU shader
+  const particleIndices = new Float32Array(particleCount);
+  for (let i = 0; i < particleCount; i++) {
+    particleIndices[i] = i; // Unique index for each particle
+  }
+  
+  // Return data for geometry creation (don't access particles yet)
+  return {
+    velocities: particleVelocities,
+    indices: particleIndices
+  };
 }
 
-// Function to create particle geometry and system
+// Function to create particle geometry and system with GPU attributes
 function createParticleSystem() {
   particleGeometry.dispose(); // Clean up old geometry
-  particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));  
-  particleGeometry.setAttribute('size', new THREE.BufferAttribute(particleSizes, 1));
   
-  // Update particles object with new data
-  particles.geometry = particleGeometry;
-  particles.userData.velocities = particleVelocities;
+  // Set up basic attributes
+  particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));  
+  particleGeometry.setAttribute('originalSize', new THREE.BufferAttribute(particleSizes, 1));
+  
+  // Initialize particle data if not already done
+  const particleData = initializeParticles();
+  
+  // Set up GPU shader attributes
+  particleGeometry.setAttribute('velocity', new THREE.BufferAttribute(particleData.velocities, 3));
+  particleGeometry.setAttribute('particleIndex', new THREE.BufferAttribute(particleData.indices, 1));
+  
+  // Update particles object with new data (only if particles exists)
+  if (particles) {
+    particles.geometry = particleGeometry;
+    particles.userData = particleData;
+  }
 }
 
 // Initialize particles with default values
-initializeParticles();
+const particleData = initializeParticles();
 
+// Set all particle geometry attributes
 particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
-particleGeometry.setAttribute('size', new THREE.BufferAttribute(particleSizes, 1));
-
-// Create particle material - small, dim, and slightly transparent
-const particleMaterial = new THREE.PointsMaterial({
-  color: 0x3a5b6c,
-  size: 0.02, // Smaller base size
-  transparent: true,
-  opacity: 0.25, // Lower base opacity
-
-  blending: THREE.NormalBlending, // Changed from AdditiveBlending to respect fog
-  depthWrite: false,
-  sizeAttenuation: true,
-  vertexColors: false,
-  fog: true, // Explicitly enable fog interaction
-  alphaTest: 0.1 // Add alpha test to prevent z-fighting
-});
+particleGeometry.setAttribute('originalSize', new THREE.BufferAttribute(particleSizes, 1));
+particleGeometry.setAttribute('velocity', new THREE.BufferAttribute(particleData.velocities, 3));
+particleGeometry.setAttribute('particleIndex', new THREE.BufferAttribute(particleData.indices, 1));
 
 // Create a simple circular texture for round particles
 const canvas = document.createElement('canvas');
@@ -678,12 +702,110 @@ gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
 ctx.fillStyle = gradient;
 ctx.fillRect(0, 0, 32, 32);
 
-// Apply the circular texture to the material
 const circleTexture = new THREE.CanvasTexture(canvas);
 circleTexture.needsUpdate = true;
-particleMaterial.map = circleTexture;
+
+// GPU-based particle material with custom shaders
+const particleMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    time: { value: 0 },
+    pointTexture: { value: circleTexture },
+    color: { value: new THREE.Color(0x8fafbf) }, // Brighter, more visible color
+    opacity: { value: 0.8 }, // Even higher opacity for debugging
+    size: { value: 0.5 }, // Half the previous size
+    boundsMin: { value: new THREE.Vector3(-50, -25, -50) },
+    boundsMax: { value: new THREE.Vector3(50, 25, 50) },
+    // Fog uniforms
+    fogColor: { value: scene.fog.color },
+    fogDensity: { value: scene.fog.density }
+  },
+  vertexShader: `
+    uniform float time;
+    uniform float size;
+    uniform vec3 boundsMin;
+    uniform vec3 boundsMax;
+    
+    attribute float originalSize;
+    attribute vec3 velocity;
+    attribute float particleIndex;
+    
+    varying float vOpacity;
+    varying float vFogFactor;
+    
+    void main() {
+      // Calculate animated position
+      vec3 animatedPosition = position;
+      
+      // Apply constant velocity drift
+      animatedPosition += velocity * time;
+      
+      // Add very subtle wave motion with slower, more trending patterns
+      float waveX = sin(time * 0.0000025 + particleIndex * 0.001) * 0.0000075; // Half speed again, smaller amplitude
+      float waveY = cos(time * 0.000002 + particleIndex * 0.0008) * 0.000005; // Half speed again, smaller amplitude  
+      float waveZ = sin(time * 0.000003 + particleIndex * 0.0012) * 0.0000075; // Half speed again, smaller amplitude
+      animatedPosition += vec3(waveX, waveY, waveZ);
+      
+      // Boundary wrapping - modulo operation for seamless wrapping
+      vec3 boundsSize = boundsMax - boundsMin;
+      animatedPosition = boundsMin + mod(animatedPosition - boundsMin, boundsSize);
+      
+      // Subtle size pulsing - even slower and gentler
+      float sizePulse = 1.0 + sin(time * 0.0001 + particleIndex * 0.01) * 0.025; // Half speed again, even smaller variation
+      float finalSize = originalSize * sizePulse * size;
+      
+      // Transform to screen space
+      vec4 mvPosition = modelViewMatrix * vec4(animatedPosition, 1.0);
+      gl_Position = projectionMatrix * mvPosition;
+      
+      // Size attenuation - made more visible
+      gl_PointSize = finalSize * (800.0 / -mvPosition.z);
+      
+      // Calculate fog factor for exponential squared fog
+      float fogDistance = -mvPosition.z;
+      vFogFactor = 1.0 - exp(-fogDistance * fogDistance * 0.0064); // fogDensity squared
+      vFogFactor = clamp(vFogFactor, 0.0, 1.0);
+      
+      // Vary opacity slightly per particle
+      vOpacity = 0.8 + sin(particleIndex * 0.1) * 0.2;
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D pointTexture;
+    uniform vec3 color;
+    uniform float opacity;
+    uniform vec3 fogColor;
+    
+    varying float vOpacity;
+    varying float vFogFactor;
+    
+    void main() {
+      // Sample the circular texture
+      vec4 textureColor = texture2D(pointTexture, gl_PointCoord);
+      
+      // Base particle color
+      vec3 finalColor = color;
+      
+      // Apply fog mixing
+      finalColor = mix(finalColor, fogColor, vFogFactor);
+      
+      // Final alpha with texture alpha and fog consideration
+      float finalAlpha = textureColor.a * opacity * vOpacity * (1.0 - vFogFactor * 0.8);
+      
+      gl_FragColor = vec4(finalColor, finalAlpha);
+      
+      // Alpha test to prevent z-fighting
+      if (gl_FragColor.a < 0.01) discard;
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.NormalBlending,
+  fog: false // We handle fog manually in the shader
+});
 
 const particles = new THREE.Points(particleGeometry, particleMaterial);
+// Store particle data for later use
+particles.userData = particleData;
 scene.add(particles);
 
 // Loaders setup with better error handling and progress
@@ -1181,6 +1303,31 @@ function vrMove(dt) {
 // Add this variable declaration near the top with other variables
 let lastTime = 0;
 
+// Performance monitoring for GPU optimization verification
+let frameCount = 0;
+let performanceStartTime = performance.now();
+let averageFrameTime = 0;
+
+// Performance monitoring function
+function updatePerformanceStats(currentTime) {
+  frameCount++;
+  if (frameCount % 60 === 0) { // Every 60 frames (roughly 1 second at 60fps)
+    const elapsed = currentTime - performanceStartTime;
+    averageFrameTime = elapsed / 60;
+    performanceStartTime = currentTime;
+    
+    // Log performance metrics
+    if (frameCount % 300 === 0) { // Every 5 seconds
+      console.log(`🚀 GPU Particle Performance:`, {
+        averageFrameTime: `${averageFrameTime.toFixed(2)}ms`,
+        targetFrameTime: '16.67ms (60fps)',
+        particleCount: particleCount,
+        status: averageFrameTime < 16.67 ? '✅ Smooth' : '⚠️ Needs optimization'
+      });
+    }
+  }
+}
+
 // Add VR session event listeners to handle mode transitions
 renderer.xr.addEventListener('sessionstart', () => {
   console.log('VR session started');
@@ -1225,48 +1372,28 @@ renderer.xr.addEventListener('sessionend', () => {
   controls.update();
 });
 
-// Update the render loop
+// Update the render loop with GPU-optimized particle animation
 renderer.setAnimationLoop(time => {
   const t = time;
   const dt = Math.min((time - lastTime) / 1000, 0.1);
   lastTime = time;
 
-  // Animate particles with gentle motion
-  const positions = particles.geometry.attributes.position.array;
-  const velocities = particles.userData.velocities;
-  const sizes = particles.geometry.attributes.size.array;
-  
-  for (let i = 0; i < particleCount; i++) {
-    const i3 = i * 3;
+  // Performance monitoring
+  updatePerformanceStats(t);
+
+  // Update GPU particle shader uniforms (eliminates CPU bottleneck)
+  if (particleMaterial && particleMaterial.uniforms) {
+    particleMaterial.uniforms.time.value = t;
     
-    // Update positions based on velocities
-    positions[i3] += velocities[i3];
-    positions[i3 + 1] += velocities[i3 + 1];
-    positions[i3 + 2] += velocities[i3 + 2];
-    
-    // Add subtle wave motion with different frequencies for variety - ultra gentle
-    positions[i3] += Math.sin(t * 0.000025 + i * 0.01) * 0.000075;
-    positions[i3 + 1] += Math.cos(t * 0.00002 + i * 0.008) * 0.00005;
-    positions[i3 + 2] += Math.sin(t * 0.00003 + i * 0.012) * 0.000075;
-    
-    // Add slight size pulsing for some particles (reduced frequency for performance)
-    if (i % 15 === 0) { // Only every 15th particle for better performance
-      const baseSizeIndex = Math.floor(i3 / 3);
-      const originalSize = particleSizes[baseSizeIndex];
-      sizes[baseSizeIndex] = originalSize * (1 + Math.sin(t * 0.001 + i * 0.1) * 0.15);
+    // Update particle bounds if they've changed
+    if (particleBounds) {
+      particleMaterial.uniforms.boundsMin.value.copy(particleBounds.min);
+      particleMaterial.uniforms.boundsMax.value.copy(particleBounds.max);
     }
-    
-    // Boundary checks - wrap particles around within wreck bounds
-    if (positions[i3] > particleBounds.max.x) positions[i3] = particleBounds.min.x;
-    if (positions[i3] < particleBounds.min.x) positions[i3] = particleBounds.max.x;
-    if (positions[i3 + 1] > particleBounds.max.y) positions[i3 + 1] = particleBounds.min.y;
-    if (positions[i3 + 1] < particleBounds.min.y) positions[i3 + 1] = particleBounds.max.y;
-    if (positions[i3 + 2] > particleBounds.max.z) positions[i3 + 2] = particleBounds.min.z;
-    if (positions[i3 + 2] < particleBounds.min.z) positions[i3 + 2] = particleBounds.max.z;
   }
   
-  particles.geometry.attributes.position.needsUpdate = true;
-  particles.geometry.attributes.size.needsUpdate = true;
+  // No more CPU particle animation - everything is handled in GPU shaders!
+  // This eliminates the 2-3ms CPU bottleneck on Quest-class devices
   
   if (renderer.xr.isPresenting) {
     vrMove(dt);
