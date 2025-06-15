@@ -353,7 +353,7 @@ renderer.xr.enabled = true;
 
 // Optimize renderer settings for faster loading/rendering
 renderer.shadowMap.enabled = true; // Re-enable shadows for realistic lighting
-renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Soft shadows for better quality
+renderer.shadowMap.type = THREE.VSMShadowMap; // Variance shadows reduce moire effects and banding
 renderer.physicallyCorrectLights = false;
 renderer.toneMapping = THREE.NoToneMapping;
 
@@ -534,13 +534,19 @@ function createSpotlight(beamWidthDegrees = 35) {
   controllerSpotlight.visible = false;
   controllerSpotlight.castShadow = true; // Enable shadow casting
   
-  // Optimize shadow settings for VR performance
+  // Optimize shadow settings for VR performance and eliminate moire effects
   const shadowMapSize = isQuest2 ? 512 : 1024; // Reduce shadow quality on Quest 2
   controllerSpotlight.shadow.mapSize.width = shadowMapSize;
   controllerSpotlight.shadow.mapSize.height = shadowMapSize;
   controllerSpotlight.shadow.camera.near = 0.1;
   controllerSpotlight.shadow.camera.far = spotlightDistance; // Match spotlight distance
   controllerSpotlight.shadow.camera.fov = beamWidthDegrees; // Match spotlight angle
+  
+  // Fix shadow acne and moire effects with proper bias settings
+  controllerSpotlight.shadow.bias = -0.0005; // Negative bias to prevent shadow acne
+  controllerSpotlight.shadow.normalBias = 0.02; // Normal bias to reduce peter panning
+  controllerSpotlight.shadow.radius = 4; // Softer shadow edges to reduce artifacts
+  controllerSpotlight.shadow.blurSamples = 10; // More samples for smoother shadows
 
   // Add spotlight to scene
   scene.add(controllerSpotlight);
@@ -939,8 +945,12 @@ function loadModel(modelKey) {
           console.log('Disabled embedded light:', obj.name);
         }
         
-        // SELECTIVE MATERIAL CLEANING - Only remove self-illumination, preserve spotlight response
+        // CONSISTENT MATERIAL CLEANING - Remove self-illumination, enable shadows, preserve spotlight response
         if (obj.isMesh && obj.material) {
+          // Consistently enable shadow properties for all meshes
+          obj.castShadow = true;
+          obj.receiveShadow = true;
+          
           // Handle both single materials and material arrays
           const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
           
@@ -970,29 +980,29 @@ function loadModel(modelKey) {
               material.lightMapIntensity = 0;
             }
             
-            // CONVERT MeshBasicMaterial to MeshLambertMaterial - MeshBasicMaterial is always self-lit
-            if (material.type === 'MeshBasicMaterial') {
-              console.log('Converting MeshBasicMaterial to MeshLambertMaterial for:', obj.name);
+            // CONVERT ALL problematic materials to MeshLambertMaterial for consistent lighting
+            if (material.type === 'MeshBasicMaterial' || material.type === 'MeshPhongMaterial') {
+              console.log(`Converting ${material.type} to MeshLambertMaterial for:`, obj.name);
               
-              // Use MeshLambertMaterial which responds well to spotlights
+              // Use MeshLambertMaterial which responds consistently to spotlights and shadows
               const newMaterial = new THREE.MeshLambertMaterial({
                 map: material.map,                    // Main texture/diffuse map
-                color: material.color,
+                color: material.color || new THREE.Color(0xffffff),
                 transparent: material.transparent,
-                opacity: material.opacity,
+                opacity: material.opacity !== undefined ? material.opacity : 1.0,
                 alphaMap: material.alphaMap,          // Alpha/transparency map
-                side: material.side,
+                side: material.side !== undefined ? material.side : THREE.FrontSide,
                 // Copy any other relevant properties
-                wireframe: material.wireframe,
-                vertexColors: material.vertexColors,
+                wireframe: material.wireframe || false,
+                vertexColors: material.vertexColors || false,
                 fog: material.fog !== undefined ? material.fog : true,
                 // Additional texture maps that might be present
                 aoMap: material.aoMap,                // Ambient occlusion map
-                aoMapIntensity: material.aoMapIntensity,
+                aoMapIntensity: material.aoMapIntensity || 1.0,
                 envMap: material.envMap,              // Environment map
-                reflectivity: material.reflectivity,
-                refractionRatio: material.refractionRatio,
-                combine: material.combine
+                reflectivity: material.reflectivity || 1.0,
+                refractionRatio: material.refractionRatio || 0.98,
+                combine: material.combine || THREE.MultiplyOperation
               });
               
               // Force material to update immediately
@@ -1005,23 +1015,32 @@ function loadModel(modelKey) {
                 obj.material = newMaterial;
               }
               
-              // Force geometry to update too
-              if (obj.geometry) {
-                obj.geometry.computeVertexNormals();
-                obj.geometry.normalizeNormals();
-              }
-              
-              console.log('Successfully converted to MeshLambertMaterial for:', obj.name, 'with texture:', !!material.map);
+              console.log(`Successfully converted to MeshLambertMaterial for: ${obj.name}, with texture: ${!!material.map}`);
+            }
+            
+            // For MeshStandardMaterial and other materials, just clean them without conversion
+            else if (material.type === 'MeshStandardMaterial' || material.type === 'MeshPhysicalMaterial') {
+              // These materials work well with shadows, just ensure proper settings
+              material.needsUpdate = true;
+              console.log(`Cleaned ${material.type} for: ${obj.name} (kept original material type)`);
+            }
+            
+            // Force geometry updates for better shadow calculations
+            if (obj.geometry) {
+              obj.geometry.computeVertexNormals();
+              obj.geometry.normalizeNormals();
             }
             
             // Ensure material updates
-            if (material.needsUpdate !== undefined) {
-              material.needsUpdate = true;
+            const currentMaterial = Array.isArray(obj.material) ? obj.material[materialIndex] : obj.material;
+            if (currentMaterial && currentMaterial.needsUpdate !== undefined) {
+              currentMaterial.needsUpdate = true;
             }
           });
           
           console.log('Material cleaning complete for:', obj.name, 'Material type:', 
-                     Array.isArray(obj.material) ? obj.material.map(m => m.type) : obj.material.type);
+                     Array.isArray(obj.material) ? obj.material.map(m => m.type) : obj.material.type,
+                     'Shadows enabled: cast=' + obj.castShadow + ', receive=' + obj.receiveShadow);
         }
       });
       
