@@ -47,6 +47,64 @@ import { MeshoptDecoder } from 'https://cdn.jsdelivr.net/npm/three@0.177.0/examp
 import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.177.0/examples/jsm/webxr/VRButton.js';
 import { XRControllerModelFactory } from 'https://cdn.jsdelivr.net/npm/three@0.177.0/examples/jsm/webxr/XRControllerModelFactory.js';
 
+// Device detection for VR optimization
+let isQuest2 = false;
+let isQuest3 = false;
+
+// Function to detect Quest device type
+function detectQuestDevice() {
+  try {
+    const userAgent = navigator.userAgent.toLowerCase();
+    
+    // Quest 2 detection patterns
+    if (userAgent.includes('quest 2') || 
+        userAgent.includes('oculus quest 2') ||
+        (userAgent.includes('oculus') && userAgent.includes('android') && !userAgent.includes('quest 3'))) {
+      isQuest2 = true;
+      console.log('🥽 Quest 2 detected - applying performance optimizations');
+      return 'quest2';
+    }
+    
+    // Quest 3 detection patterns
+    if (userAgent.includes('quest 3') || 
+        userAgent.includes('oculus quest 3') ||
+        userAgent.includes('meta quest 3')) {
+      isQuest3 = true;
+      console.log('🥽 Quest 3 detected - using full render distance');
+      return 'quest3';
+    }
+    
+    console.log('🥽 Unknown VR device or desktop - using default settings');
+    return 'unknown';
+  } catch (error) {
+    console.warn('Device detection failed:', error);
+    return 'unknown';
+  }
+}
+
+// Function to apply Quest-specific optimizations
+function applyQuestOptimizations(deviceType) {
+  if (deviceType === 'quest2') {
+    // Limit render distance to 20m for Quest 2 performance
+    camera.far = 20;
+    camera.updateProjectionMatrix();
+    
+    // Update fog to match reduced render distance
+    scene.fog = new THREE.FogExp2(0x041729, 0.12); // Denser fog for 20m visibility
+    
+    console.log('📊 Quest 2 optimizations applied: 20m render limit, denser fog');
+  } else {
+    // Quest 3 or other devices - use full render distance
+    camera.far = 2000;
+    camera.updateProjectionMatrix();
+    
+    // Original fog settings
+    scene.fog = new THREE.FogExp2(0x041729, 0.08);
+    
+    console.log('📊 Full render distance maintained: 2000m range');
+  }
+}
+
 // ------------------------ Config ----------------------------
 // Available models with display names and credits
 const MODELS = {
@@ -458,11 +516,14 @@ function createSpotlight(beamWidthDegrees = 35) {
   // Convert degrees to radians
   const beamWidthRadians = (beamWidthDegrees * Math.PI) / 180;
   
+  // Adjust spotlight distance based on Quest device for performance
+  const spotlightDistance = isQuest2 ? 15 : 15; // Keep same distance for now, could reduce further if needed
+  
   // Create new spotlight with configurable beam width
   controllerSpotlight = new THREE.SpotLight(
     0xffffff,        // Pure white light
     2.5,             // Realistic underwater torch intensity
-    15,              // Realistic underwater torch distance
+    spotlightDistance, // Adjustable distance based on device
     beamWidthRadians, // Configurable beam width in radians
     0.15,            // Softer penumbra for more realistic falloff
     0.8              // Higher decay for realistic underwater attenuation
@@ -474,10 +535,11 @@ function createSpotlight(beamWidthDegrees = 35) {
   controllerSpotlight.castShadow = true; // Enable shadow casting
   
   // Optimize shadow settings for VR performance
-  controllerSpotlight.shadow.mapSize.width = 1024; // Good quality without being too expensive
-  controllerSpotlight.shadow.mapSize.height = 1024;
+  const shadowMapSize = isQuest2 ? 512 : 1024; // Reduce shadow quality on Quest 2
+  controllerSpotlight.shadow.mapSize.width = shadowMapSize;
+  controllerSpotlight.shadow.mapSize.height = shadowMapSize;
   controllerSpotlight.shadow.camera.near = 0.1;
-  controllerSpotlight.shadow.camera.far = 15; // Match spotlight distance
+  controllerSpotlight.shadow.camera.far = spotlightDistance; // Match spotlight distance
   controllerSpotlight.shadow.camera.fov = beamWidthDegrees; // Match spotlight angle
 
   // Add spotlight to scene
@@ -488,7 +550,7 @@ function createSpotlight(beamWidthDegrees = 35) {
   scene.add(spotlightTarget);
   controllerSpotlight.target = spotlightTarget;
 
-  console.log(`Spotlight created/recreated with ${beamWidthDegrees}° beam width and intensity ${controllerSpotlight.intensity}:`, controllerSpotlight);
+  console.log(`Spotlight created/recreated with ${beamWidthDegrees}° beam width, ${spotlightDistance}m distance, and ${shadowMapSize}px shadows:`, controllerSpotlight);
 }
 
 // Add underwater particles system - dynamically sized based on wreck
@@ -514,26 +576,26 @@ function calculateParticleCount(wreckBounds) {
   const expandedSize = size.clone().multiplyScalar(expansion);
   const volume = expandedSize.x * expandedSize.y * expandedSize.z;
   
-  // Dynamic density scaling based on volume size - halved all densities
-  // Small sites get much lower density, large sites get much higher density
+  // Dynamic density scaling - reduced for smaller sites, keep cap good for big sites
+  // Small sites get much lower density, medium sites scale up, large sites maintain good density
   let targetDensity;
   if (volume < 5000) {
-    // Small sites (e.g., 20x5m): 0.375 particles/m³ (halved from 0.75)
-    targetDensity = 0.375;
+    // Small sites (e.g., 20x5m): 0.1875 particles/m³ (halved again from 0.375)
+    targetDensity = 0.1875;
   } else if (volume < 20000) {
-    // Medium sites: Scale from 0.375 to 3.0 particles/m³ (halved)
+    // Medium sites: Scale from 0.1875 to 3.0 particles/m³ 
     const scaleFactor = (volume - 5000) / 15000; // 0 to 1
-    targetDensity = 0.375 + (scaleFactor * 2.625); // 0.375 to 3.0
+    targetDensity = 0.1875 + (scaleFactor * 2.8125); // 0.1875 to 3.0
   } else {
-    // Large sites (e.g., 70x15m): 4.5 particles/m³ (halved from 9.0)
+    // Large sites (e.g., 70x15m): Keep good density at 4.5 particles/m³
     targetDensity = 4.5;
   }
   
   const calculatedCount = Math.round(volume * targetDensity);
   
-  // Clamp between reasonable limits for performance - halved limits
-  const minParticles = 400;   // Halved from 800
-  const maxParticles = 10000; // Halved from 20000
+  // Clamp between reasonable limits - reduced minimum for small sites
+  const minParticles = 200;   // Halved from 400 for smaller sites
+  const maxParticles = 10000; // Keep good cap for large sites
   const finalCount = Math.max(minParticles, Math.min(maxParticles, calculatedCount));
   
   console.log(`Wreck size: ${size.x.toFixed(1)}×${size.y.toFixed(1)}×${size.z.toFixed(1)}m`);
@@ -1331,9 +1393,16 @@ function updatePerformanceStats(currentTime) {
 // Add VR session event listeners to handle mode transitions
 renderer.xr.addEventListener('sessionstart', () => {
   console.log('VR session started');
+  
+  // Detect Quest device and apply optimizations
+  const deviceType = detectQuestDevice();
+  applyQuestOptimizations(deviceType);
+  
+  // Recreate spotlight with device-specific optimizations
   if (controllerSpotlight) {
+    createSpotlight(35); // Recreate with Quest-specific settings
     controllerSpotlight.visible = false; // Will be enabled when controller is detected
-    console.log('Spotlight intensity on session start:', controllerSpotlight.intensity);
+    console.log('Spotlight recreated with device optimizations, intensity:', controllerSpotlight.intensity);
   }
   
   // Initialize audio for VR session
@@ -1342,6 +1411,19 @@ renderer.xr.addEventListener('sessionstart', () => {
 
 renderer.xr.addEventListener('sessionend', () => {
   console.log('VR session ended');
+  
+  // Reset camera to full render distance for desktop
+  camera.far = 2000;
+  camera.updateProjectionMatrix();
+  
+  // Reset fog to original settings
+  scene.fog = new THREE.FogExp2(0x041729, 0.08);
+  
+  // Reset Quest detection flags
+  isQuest2 = false;
+  isQuest3 = false;
+  
+  console.log('📊 Render settings reset to desktop defaults');
   
   // Stop any playing movement sounds
   stopMovementSound();
@@ -1405,6 +1487,10 @@ renderer.setAnimationLoop(time => {
   
   renderer.render(scene, camera);
 });
+
+// Apply device-specific optimizations on load
+const detectedDevice = detectQuestDevice();
+applyQuestOptimizations(detectedDevice);
 </script>
 </body>
 </html>
