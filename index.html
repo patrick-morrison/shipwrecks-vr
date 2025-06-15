@@ -582,26 +582,26 @@ function calculateParticleCount(wreckBounds) {
   const expandedSize = size.clone().multiplyScalar(expansion);
   const volume = expandedSize.x * expandedSize.y * expandedSize.z;
   
-  // Dynamic density scaling - reduced for smaller sites, keep cap good for big sites
-  // Small sites get much lower density, medium sites scale up, large sites maintain good density
+  // Dynamic density scaling - much lower for small sites to avoid overcrowding
+  // Small sites get very low density, medium sites scale up gradually, large sites maintain good density
   let targetDensity;
   if (volume < 5000) {
-    // Small sites (e.g., 20x5m): 0.1875 particles/m³ (halved again from 0.375)
-    targetDensity = 0.1875;
+    // Small sites (e.g., 20x5m): 0.0625 particles/m³ (3x reduction from original)
+    targetDensity = 0.0625;
   } else if (volume < 20000) {
-    // Medium sites: Scale from 0.1875 to 3.0 particles/m³ 
+    // Medium sites: Scale from 0.0625 to 2.0 particles/m³ 
     const scaleFactor = (volume - 5000) / 15000; // 0 to 1
-    targetDensity = 0.1875 + (scaleFactor * 2.8125); // 0.1875 to 3.0
+    targetDensity = 0.0625 + (scaleFactor * 1.9375); // 0.0625 to 2.0
   } else {
-    // Large sites (e.g., 70x15m): Keep good density at 4.5 particles/m³
-    targetDensity = 4.5;
+    // Large sites (e.g., 70x15m): Keep good density at 3.5 particles/m³
+    targetDensity = 3.5;
   }
   
   const calculatedCount = Math.round(volume * targetDensity);
   
-  // Clamp between reasonable limits - reduced minimum for small sites
-  const minParticles = 200;   // Halved from 400 for smaller sites
-  const maxParticles = 10000; // Keep good cap for large sites
+  // Clamp between reasonable limits - much lower minimum for small sites
+  const minParticles = 100;   // Further reduced for small sites
+  const maxParticles = 8000;  // Slightly reduced cap for performance
   const finalCount = Math.max(minParticles, Math.min(maxParticles, calculatedCount));
   
   console.log(`Wreck size: ${size.x.toFixed(1)}×${size.y.toFixed(1)}×${size.z.toFixed(1)}m`);
