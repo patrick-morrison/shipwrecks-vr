@@ -11,6 +11,23 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Virtual Dive – HNLMS K XI</title>
+
+<!-- PWA Meta Tags -->
+<meta name="description" content="Immersive virtual diving experience exploring historical shipwrecks in VR">
+<meta name="theme-color" content="#041729">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shipwrecks VR">
+<meta name="mobile-web-app-capable" content="yes">
+
+<!-- PWA Manifest -->
+<link rel="manifest" href="./manifest.json">
+
+<!-- PWA Icons -->
+<link rel="icon" type="image/png" sizes="32x32" href="./icons/icon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="./icons/icon-16x16.png">
+<link rel="apple-touch-icon" sizes="192x192" href="./icons/icon-192x192.png">
+<link rel="apple-touch-icon" sizes="512x512" href="./icons/icon-512x512.png">
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#111;color:#eee;font-family:sans-serif}
   #info{position:absolute;top:10px;left:10px;z-index:10;background:rgba(0,0,0,.55);padding:6px 10px;border-radius:6px;font-size:13px;line-height:1.3em;max-width:300px}
@@ -18,6 +35,12 @@
   #modelCredit{position:absolute;top:50px;right:10px;z-index:10;background:rgba(0,0,0,.65);padding:4px 8px;border-radius:4px;font-size:11px;text-align:center;color:#999;border:1px solid rgba(255,255,255,.1)}
   #modelSelector select{background:transparent;color:#eee;border:none;padding:8px 12px;font-size:20.8px;font-family:sans-serif;cursor:pointer;outline:none}
   #modelSelector select option{background:#222;color:#eee}
+  #installPrompt{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.9);color:#fff;padding:12px 24px;border-radius:8px;border:1px solid rgba(255,255,255,.3);display:none;z-index:100}
+  #installPrompt button{background:#4CAF50;color:white;border:none;padding:8px 16px;border-radius:4px;margin:0 5px;cursor:pointer}
+  #installPrompt button:hover{background:#45a049}
+  #installPrompt .cancel{background:#f44336}
+  #installPrompt .cancel:hover{background:#da190b}
+  #offlineIndicator{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(244,67,54,.9);color:white;padding:8px 16px;border-radius:4px;display:none;z-index:100}
   a{color:#87cefa;text-decoration:none}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.177.0/build/three.module.js"}}</script>
@@ -35,6 +58,18 @@
 
 <div id="modelCredit">
   <span id="creditText">Model by WreckSploration</span>
+</div>
+
+<!-- PWA Install Prompt -->
+<div id="installPrompt">
+  <p>Install Shipwrecks VR for the best experience!</p>
+  <button id="installButton">Install</button>
+  <button id="cancelInstall" class="cancel">Cancel</button>
+</div>
+
+<!-- Offline Indicator -->
+<div id="offlineIndicator">
+  📱 Offline Mode - Some features may be limited
 </div>
 
 <script type="module">
@@ -1511,6 +1546,205 @@ renderer.setAnimationLoop(time => {
 // Apply device-specific optimizations on load
 const detectedDevice = detectQuestDevice();
 applyQuestOptimizations(detectedDevice);
+
+// ======================== PWA FUNCTIONALITY ========================
+
+// Service Worker Registration
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(registration => {
+        console.log('✅ PWA: Service Worker registered successfully:', registration.scope);
+        
+        // Check for updates
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing;
+          console.log('🔄 PWA: New service worker found, installing...');
+          
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              // New content is available
+              if (confirm('New version available! Refresh to update?')) {
+                window.location.reload();
+              }
+            }
+          });
+        });
+      })
+      .catch(error => {
+        console.error('❌ PWA: Service Worker registration failed:', error);
+      });
+  });
+}
+
+// PWA Install Prompt
+let deferredPrompt;
+const installPrompt = document.getElementById('installPrompt');
+const installButton = document.getElementById('installButton');
+const cancelInstall = document.getElementById('cancelInstall');
+
+// Listen for the beforeinstallprompt event
+window.addEventListener('beforeinstallprompt', (e) => {
+  console.log('📱 PWA: Install prompt triggered');
+  
+  // Prevent the mini-infobar from appearing on mobile
+  e.preventDefault();
+  
+  // Stash the event so it can be triggered later
+  deferredPrompt = e;
+  
+  // Show the install prompt after a delay (better UX)
+  setTimeout(() => {
+    if (!window.matchMedia('(display-mode: standalone)').matches) {
+      installPrompt.style.display = 'block';
+    }
+  }, 5000); // Show after 5 seconds
+});
+
+// Handle install button click
+installButton.addEventListener('click', async () => {
+  if (!deferredPrompt) {
+    console.log('❌ PWA: No install prompt available');
+    return;
+  }
+  
+  // Hide the prompt
+  installPrompt.style.display = 'none';
+  
+  // Show the install prompt
+  deferredPrompt.prompt();
+  
+  // Wait for the user to respond to the prompt
+  const { outcome } = await deferredPrompt.userChoice;
+  console.log(`📱 PWA: User response to install prompt: ${outcome}`);
+  
+  // Clear the deferredPrompt
+  deferredPrompt = null;
+});
+
+// Handle cancel button click
+cancelInstall.addEventListener('click', () => {
+  installPrompt.style.display = 'none';
+  deferredPrompt = null;
+  
+  // Don't show again for this session
+  sessionStorage.setItem('installPromptDismissed', 'true');
+});
+
+// Check if app is already installed
+window.addEventListener('appinstalled', () => {
+  console.log('✅ PWA: App was installed successfully');
+  installPrompt.style.display = 'none';
+  deferredPrompt = null;
+});
+
+// Hide install prompt if already in standalone mode
+if (window.matchMedia('(display-mode: standalone)').matches || 
+    window.navigator.standalone === true) {
+  console.log('📱 PWA: App is running in standalone mode');
+  installPrompt.style.display = 'none';
+}
+
+// Network Status Monitoring
+const offlineIndicator = document.getElementById('offlineIndicator');
+let isOnline = navigator.onLine;
+
+function updateOnlineStatus() {
+  if (navigator.onLine && !isOnline) {
+    // Just came back online
+    isOnline = true;
+    offlineIndicator.style.display = 'none';
+    console.log('🌐 PWA: Back online');
+    
+    // Trigger background sync if supported
+    if ('serviceWorker' in navigator && 'sync' in window.ServiceWorkerRegistration.prototype) {
+      navigator.serviceWorker.ready.then(registration => {
+        return registration.sync.register('background-sync');
+      }).catch(err => console.log('Background sync registration failed:', err));
+    }
+  } else if (!navigator.onLine && isOnline) {
+    // Just went offline
+    isOnline = false;
+    offlineIndicator.style.display = 'block';
+    console.log('📱 PWA: Gone offline');
+  }
+}
+
+// Listen for online/offline events
+window.addEventListener('online', updateOnlineStatus);
+window.addEventListener('offline', updateOnlineStatus);
+
+// Initial status check
+updateOnlineStatus();
+
+// PWA Display Mode Detection
+function getPWADisplayMode() {
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+  if (document.referrer.startsWith('android-app://')) {
+    return 'twa';
+  } else if (navigator.standalone || isStandalone) {
+    return 'standalone';
+  }
+  return 'browser';
+}
+
+// Log PWA status
+console.log('📱 PWA Status:', {
+  displayMode: getPWADisplayMode(),
+  isOnline: navigator.onLine,
+  hasServiceWorker: 'serviceWorker' in navigator,
+  canInstall: !!deferredPrompt
+});
+
+// Performance monitoring for PWA
+if ('performance' in window) {
+  window.addEventListener('load', () => {
+    const perfData = performance.getEntriesByType('navigation')[0];
+    console.log('⚡ PWA Performance:', {
+      loadTime: `${Math.round(perfData.loadEventEnd - perfData.loadEventStart)}ms`,
+      domReady: `${Math.round(perfData.domContentLoadedEventEnd - perfData.domContentLoadedEventStart)}ms`,
+      firstPaint: performance.getEntriesByName('first-paint')[0]?.startTime || 'N/A',
+      firstContentfulPaint: performance.getEntriesByName('first-contentful-paint')[0]?.startTime || 'N/A'
+    });
+  });
+}
+
+// Wake Lock API for VR sessions (prevent screen sleep)
+let wakeLock = null;
+
+async function requestWakeLock() {
+  if ('wakeLock' in navigator) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      console.log('🔒 PWA: Screen wake lock activated');
+      
+      wakeLock.addEventListener('release', () => {
+        console.log('🔓 PWA: Screen wake lock released');
+      });
+    } catch (err) {
+      console.warn('⚠️ PWA: Wake lock request failed:', err);
+    }
+  }
+}
+
+async function releaseWakeLock() {
+  if (wakeLock) {
+    await wakeLock.release();
+    wakeLock = null;
+  }
+}
+
+// Request wake lock when entering VR
+renderer.xr.addEventListener('sessionstart', () => {
+  requestWakeLock();
+});
+
+// Release wake lock when exiting VR
+renderer.xr.addEventListener('sessionend', () => {
+  releaseWakeLock();
+});
+
+console.log('🌊 Shipwrecks VR PWA initialized successfully');
 </script>
 </body>
 </html>
